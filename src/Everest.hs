@@ -43,9 +43,10 @@ data WriteRecord k v
       }
   deriving (Eq, Functor, Generic, Ord, Show)
 
-class MonadEventStore tag m => MonadProjectingEventStore tag m where
-  allEvents
-    :: Cdt.ConduitT i (ReadRecord (Key tag m) (Value tag m)) m ()
+class MonadProjectingEventStore tag m where
+  allEvents'
+    :: Proxy tag
+    -> Cdt.ConduitT i (ReadRecord (Key tag m) (Value tag m)) m ()
 
 data ReadRecord k v
   = ReadRecord
