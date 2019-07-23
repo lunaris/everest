@@ -11,14 +11,20 @@ library
     , Everest.PostgreSQL
   build-depends:
       aeson
+    , async
     , base
     , bytestring
     , conduit
+    , exceptions
     , generic-lens
     , lens
     , mtl
     , postgresql-simple
+    , resourcet
+    , stm
+    , stm-chans
     , text
+    , time
     , transformers
     , uuid
   default-language: Haskell2010
