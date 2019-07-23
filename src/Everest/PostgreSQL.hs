@@ -35,6 +35,7 @@ import Data.Functor (void)
 import qualified Data.Generics.Product.Typed as G.P
 import Data.Int (Int64)
 import Data.Proxy (Proxy)
+import Data.String (fromString)
 import qualified Data.Text as Tx
 import qualified Data.UUID as U
 import qualified Database.PostgreSQL.Simple as PG
@@ -78,7 +79,7 @@ pgWriteEvents'
   => Proxy tag
   -> [E.WriteRecord U.UUID Ae.Value]
   -> ProducerT tag m ()
-pgWriteEvents' _prx wrs = do
+pgWriteEvents' _ptag wrs = do
   cfg <- Lens.view (G.P.typed @(ProducerConfig tag))
   let conn = _pcConnection cfg
       tbl  = _pcTable cfg
@@ -110,6 +111,8 @@ instance ( MonadIO m
          , G.P.HasType (ConsumerConfig tag) r
          )
       => E.MonadConsumableEventStore tag (ConsumerT tag m) where
+  type ConsumerMonad tag (ConsumerT tag m)
+    = m
   type ConsumerKey tag (ConsumerT tag m)
     = U.UUID
   type ConsumerValue tag (ConsumerT tag m)
@@ -126,9 +129,10 @@ pgAllEvents'
      , G.P.HasType (ConsumerConfig tag) r
      )
   => Proxy tag
+  -> Proxy (ConsumerT tag m)
   -> [E.Topic]
-  -> Cdt.ConduitT i (E.ReadRecord U.UUID Ae.Value) (ConsumerT tag m) ()
-pgAllEvents' _prx topics = do
+  -> Cdt.ConduitT i (E.ReadRecord U.UUID Ae.Value) m ()
+pgAllEvents' _ptag _pm topics = do
   (conn, tbl, offset, maxOffset) <- lift $ do
     cfg <- Lens.view (G.P.typed @(ConsumerConfig tag))
     let conn   = _ccConnection cfg
@@ -144,7 +148,7 @@ pgAllEvents' _prx topics = do
   where
     goCatchUp conn tbl offset maxOffset = do
       let query =
-             "select (_offset, _timestamp, topic, key, value)\
+             "select _offset, _timestamp, topic, key, value\
             \ from ?\
             \ where _offset >= ?\
             \ and _offset <= ?\
@@ -166,7 +170,7 @@ pgAllEvents' _prx topics = do
             \   where _offset in ?\
             \   order by _offset asc\
             \ )\
-            \ select (_offset, _timestamp, topic, key, value)\
+            \ select _offset, _timestamp, topic, key, value\
             \ from es\
             \ where topic in ?\
             \ order by _offset asc"
@@ -179,7 +183,7 @@ pgAllEvents' _prx topics = do
       mapM_ Cdt.yield (coerce @[PGReadRecord] @[_] evs)
 
 pgStreamQuery
-  :: forall r i o q tag m
+  :: forall r i o q m
    . ( MonadIO m
      , Res.MonadResource m
      , PG.ToRow q
@@ -189,11 +193,7 @@ pgStreamQuery
   => PG.Connection
   -> PG.Query
   -> q
-  -> Cdt.ConduitT
-      i
-      o
-      (ConsumerT tag m)
-      ()
+  -> Cdt.ConduitT i o m ()
 pgStreamQuery conn query params = do
   queue <- liftIO $ STM.TBMQ.newTBMQueueIO capacity
   asyncFetcher <- launchAsync $
@@ -225,7 +225,7 @@ pgListen
   -> Tx.Text
   -> IO ()
 pgListen conn chan =
-  void $ PG.execute conn "listen ?" (PG.Only chan)
+  void $ PG.execute_ conn $ "listen " <> fromString (Tx.unpack chan)
 
 pgGetMaxOffset
   :: PG.Connection

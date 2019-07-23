@@ -10,11 +10,11 @@
 
 module Consumer where
 
-import Control.Monad.IO.Class (MonadIO)
+import Conduit ((.|))
+import qualified Conduit as Cdt
+import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Reader (MonadReader, ReaderT (..))
-import qualified Data.Aeson as Ae
-import qualified Data.Text as Tx
-import qualified Data.UUID.V4 as U.V4
+import qualified Control.Monad.Trans.Resource as Res
 import qualified Database.PostgreSQL.Simple as PG
 import qualified Database.PostgreSQL.Simple.Types as PG.Types
 import qualified Everest as E
@@ -43,14 +43,14 @@ main = do
       env = Env
         { _eConsumerConfig = cc
         }
-  uuid <- U.V4.nextRandom
-  runApp env $ do
-    undefined
+  runApp env $ Cdt.runConduit $
+       E.allEvents @"store" @App [E.Topic "Account"]
+    .| Cdt.mapM_C (liftIO . print)
 
 newtype App a
-  = App { _runApp :: ReaderT Env IO a }
+  = App { _runApp :: ReaderT Env (Res.ResourceT IO) a }
   deriving newtype (Applicative, Functor, Monad,
-                    MonadIO, MonadReader Env)
+                    MonadIO, Res.MonadResource, MonadReader Env)
   deriving (E.MonadConsumableEventStore "store")
     via (E.PG.ConsumerT "store" App)
 
@@ -63,4 +63,4 @@ data Env
 
 runApp :: Env -> App a -> IO a
 runApp env (App m)
-  = runReaderT m env
+  = Res.runResourceT (runReaderT m env)
