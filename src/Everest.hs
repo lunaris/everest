@@ -17,7 +17,7 @@ import Data.Proxy (Proxy (..))
 import GHC.Generics (Generic)
 import qualified Data.Text as Tx
 
-class MonadEventStore (tag :: k) (m :: Type -> Type) where
+class MonadProducibleEventStore (tag :: k) (m :: Type -> Type) where
   type Key tag m
     :: Type
   type Value tag m
@@ -29,34 +29,47 @@ class MonadEventStore (tag :: k) (m :: Type -> Type) where
 
 writeEvents
   :: forall tag m
-   . MonadEventStore tag m
+   . MonadProducibleEventStore tag m
   => [WriteRecord (Key tag m) (Value tag m)]
   -> m ()
 writeEvents =
   writeEvents' (Proxy @tag)
 
+class MonadConsumableEventStore tag m where
+  allEvents'
+    :: Proxy tag
+    -> [Topic]
+    -> Cdt.ConduitT i (ReadRecord (Key tag m) (Value tag m)) m ()
+
+allEvents
+  :: forall tag m i
+   . MonadConsumableEventStore tag m
+  => [Topic]
+  -> Cdt.ConduitT i (ReadRecord (Key tag m) (Value tag m)) m ()
+allEvents =
+  allEvents' (Proxy @tag)
+
 data WriteRecord k v
   = WriteRecord
-      { _wrType  :: !Tx.Text
+      { _wrTopic :: !Topic
       , _wrKey   :: !k
       , _wrValue :: !v
       }
   deriving (Eq, Functor, Generic, Ord, Show)
 
-class MonadProjectingEventStore tag m where
-  allEvents'
-    :: Proxy tag
-    -> Cdt.ConduitT i (ReadRecord (Key tag m) (Value tag m)) m ()
-
 data ReadRecord k v
   = ReadRecord
-      { _rrType      :: !Tx.Text
+      { _rrTopic     :: !Topic
       , _rrPartition :: !Partition
       , _rrOffset    :: !Offset
       , _rrKey       :: !k
       , _rrValue     :: !v
       }
   deriving (Eq, Functor, Generic, Ord, Show)
+
+newtype Topic
+  = Topic { getTopic :: Tx.Text }
+  deriving (Eq, Ord, Show)
 
 newtype Partition
   = Partition { getPartition :: Int32 }

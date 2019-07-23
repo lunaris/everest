@@ -12,6 +12,7 @@ library
   build-depends:
       aeson
     , base
+    , bytestring
     , conduit
     , generic-lens
     , lens

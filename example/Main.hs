@@ -5,6 +5,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Main where
@@ -33,17 +34,17 @@ main = do
     , PG.connectPassword = "everest"
     , PG.connectDatabase = "everest"
     }
-  let esc = E.PG.EventStoreConfig
-        { E.PG._escConnection = conn
-        , E.PG._escTable      = PG.Types.QualifiedIdentifier Nothing "event"
+  let pc = E.PG.ProducerConfig
+        { E.PG._pcConnection = conn
+        , E.PG._pcTable      = PG.Types.QualifiedIdentifier Nothing "event"
         }
       env = Env
-        { _eEventStoreConfig = esc
+        { _eProducerConfig = pc
         }
   uuid <- U.V4.nextRandom
   runApp env $ do
     E.writeEvents @"store"
-      [ E.WriteRecord "Account" uuid $ Ae.object
+      [ E.WriteRecord (E.Topic "Account") uuid $ Ae.object
           [ "type" Ae..= ("AccountCreated" :: Tx.Text)
           , "value" Ae..= Ae.object
               [ "accountId" Ae..= uuid
@@ -56,12 +57,12 @@ newtype App a
   = App { _runApp :: ReaderT Env IO a }
   deriving newtype (Applicative, Functor, Monad,
                     MonadIO, MonadReader Env)
-  deriving (E.MonadEventStore "store")
-    via (E.PG.EventStoreT "store" App)
+  deriving (E.MonadProducibleEventStore "store")
+    via (E.PG.ProducerT "store" App)
 
 data Env
   = Env
-      { _eEventStoreConfig :: !(E.PG.EventStoreConfig "store")
+      { _eProducerConfig :: !(E.PG.ProducerConfig "store")
       }
 
   deriving (Generic)
