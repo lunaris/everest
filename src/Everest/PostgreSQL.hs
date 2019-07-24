@@ -66,11 +66,11 @@ instance ( MonadIO m
     = U.UUID
   type ProducerValue tag (ProducerT tag m)
     = Ae.Value
-  writeEvents' =
-    pgWriteEvents'
-  {-# INLINE writeEvents' #-}
+  writeEventsP =
+    pgWriteEventsP
+  {-# INLINE writeEventsP #-}
 
-pgWriteEvents'
+pgWriteEventsP
   :: forall tag r m
    . ( MonadIO m
      , MonadReader r m
@@ -79,7 +79,7 @@ pgWriteEvents'
   => Proxy tag
   -> [E.WriteRecord U.UUID Ae.Value]
   -> ProducerT tag m ()
-pgWriteEvents' _ptag wrs = do
+pgWriteEventsP _ptag wrs = do
   cfg <- Lens.view (G.P.typed @(ProducerConfig tag))
   let conn = _pcConnection cfg
       tbl  = _pcTable cfg
@@ -117,11 +117,11 @@ instance ( MonadIO m
     = U.UUID
   type ConsumerValue tag (ConsumerT tag m)
     = Ae.Value
-  allEvents' =
-    pgAllEvents'
-  {-# INLINE allEvents' #-}
+  allEventsP =
+    pgAllEventsP
+  {-# INLINE allEventsP #-}
 
-pgAllEvents'
+pgAllEventsP
   :: forall tag r m i
    . ( MonadIO m
      , Res.MonadResource m
@@ -132,7 +132,7 @@ pgAllEvents'
   -> Proxy (ConsumerT tag m)
   -> [E.Topic]
   -> Cdt.ConduitT i (E.ReadRecord U.UUID Ae.Value) m ()
-pgAllEvents' _ptag _pm topics = do
+pgAllEventsP _ptag _pm topics = do
   (conn, tbl, offset, maxOffset) <- lift $ do
     cfg <- Lens.view (G.P.typed @(ConsumerConfig tag))
     let conn   = _ccConnection cfg
@@ -217,8 +217,9 @@ pgStreamQuery conn query params = do
           liftIO (STM.atomically (STM.TBMQ.readTBMQueue queue)) >>= \case
             Nothing ->
               pure ()
-            Just r ->
+            Just r -> do
               Cdt.yield (coerce @r @o r)
+              go
 
 pgListen
   :: PG.Connection

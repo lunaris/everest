@@ -23,7 +23,7 @@ class MonadProducibleEventStore (tag :: k) (m :: Type -> Type) where
     :: Type
   type ProducerValue tag m
     :: Type
-  writeEvents'
+  writeEventsP
     :: Proxy tag
     -> [ProducerWriteRecord tag m]
     -> m ()
@@ -34,7 +34,7 @@ writeEvents
   => [ProducerWriteRecord tag m]
   -> m ()
 writeEvents =
-  writeEvents' (Proxy @tag)
+  writeEventsP (Proxy @tag)
 
 class MonadConsumableEventStore (tag :: k) (m :: Type -> Type) where
   type ConsumerMonad tag m
@@ -43,7 +43,7 @@ class MonadConsumableEventStore (tag :: k) (m :: Type -> Type) where
     :: Type
   type ConsumerValue tag m
     :: Type
-  allEvents'
+  allEventsP
     :: Proxy tag
     -> Proxy m
     -> [Topic]
@@ -51,11 +51,13 @@ class MonadConsumableEventStore (tag :: k) (m :: Type -> Type) where
 
 allEvents
   :: forall tag m i
-   . MonadConsumableEventStore tag m
+   . ( MonadConsumableEventStore tag m
+     , m ~ ConsumerMonad tag m
+     )
   => [Topic]
-  -> Cdt.ConduitT i (ConsumerReadRecord tag m) (ConsumerMonad tag m) ()
+  -> Cdt.ConduitT i (ConsumerReadRecord tag m) m ()
 allEvents =
-  allEvents' (Proxy @tag) (Proxy @m)
+  allEventsP (Proxy @tag) (Proxy @m)
 
 data WriteRecord k v
   = WriteRecord

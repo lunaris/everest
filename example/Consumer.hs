@@ -22,7 +22,7 @@ import qualified Everest.PostgreSQL as E.PG
 import GHC.Generics (Generic)
 
 --------------------------------------------------------------------------------
---  Example
+--  Example consumer
 --------------------------------------------------------------------------------
 
 main :: IO ()
@@ -44,7 +44,7 @@ main = do
         { _eConsumerConfig = cc
         }
   runApp env $ Cdt.runConduit $
-       E.allEvents @"store" @App [E.Topic "Account"]
+       E.allEvents @"store" [E.Topic "Account"]
     .| Cdt.mapM_C (liftIO . print)
 
 newtype App a

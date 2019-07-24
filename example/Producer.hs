@@ -22,7 +22,7 @@ import qualified Everest.PostgreSQL as E.PG
 import GHC.Generics (Generic)
 
 --------------------------------------------------------------------------------
---  Example
+--  Example producer
 --------------------------------------------------------------------------------
 
 main :: IO ()
