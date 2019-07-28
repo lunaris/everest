@@ -2,6 +2,7 @@ module Everest.JSON where
 
 import qualified Everest as E
 
+import qualified Conduit as Cdt
 import qualified Control.Lens as Lens
 import qualified Data.Aeson as Ae
 import qualified Data.Aeson.Lens as Ae.Lens
@@ -20,3 +21,10 @@ writeRecord topic k v =
     , E._wrKey   = k
     , E._wrValue = Lens.review Ae.Lens._Value (Ae.toJSON v)
     }
+
+mapJSONC
+  :: ( Monad m
+     )
+  => Cdt.ConduitT i o m ()
+mapJSONC =
+  Cdt.mapC undefined
