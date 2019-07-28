@@ -1,4 +1,5 @@
 resolver: lts-13.26
 packages:
 - .
-extra-deps: []
+extra-deps:
+- hw-kafka-client-2.6.0@sha256:f8d20f3b88dee2c798b6b7f1b177a5e54a9aa5f4c1c7c8127847b5a555451cd8

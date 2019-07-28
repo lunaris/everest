@@ -8,6 +8,10 @@ library
   hs-source-dirs: src
   exposed-modules:
       Everest
+    , Everest.JSON
+
+    , Everest.Kafka
+
     , Everest.PostgreSQL
   build-depends:
       aeson
@@ -17,7 +21,9 @@ library
     , conduit
     , exceptions
     , generic-lens
+    , hw-kafka-client
     , lens
+    , lens-aeson
     , mtl
     , postgresql-simple
     , resourcet

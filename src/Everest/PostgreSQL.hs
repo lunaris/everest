@@ -89,7 +89,6 @@ pgWriteEventsP _ptag wrs = do
     , PG.Types.Values ["text", "uuid", "jsonb"]
         [(topic, k, v) | E.WriteRecord (E.Topic topic) k v <- wrs]
     )
-  pure ()
 
 newtype ConsumerT tag m a
   = ConsumerT (m a)
