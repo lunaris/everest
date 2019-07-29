@@ -8,7 +8,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Consumer where
+module PostgreSQLConsumer where
 
 import Conduit ((.|))
 import qualified Conduit as Cdt
@@ -59,7 +59,7 @@ data Env
       { _eConsumerConfig :: !(E.PG.ConsumerConfig "store")
       }
 
-  deriving (Generic)
+  deriving Generic
 
 runApp :: Env -> App a -> IO a
 runApp env (App m)

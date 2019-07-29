@@ -10,7 +10,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Producer where
+module KafkaProducer where
 
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Reader (MonadReader, ReaderT (..))
@@ -18,12 +18,11 @@ import qualified Data.Aeson as Ae
 import qualified Data.Text as Tx
 import qualified Data.UUID as U
 import qualified Data.UUID.V4 as U.V4
-import qualified Database.PostgreSQL.Simple as PG
-import qualified Database.PostgreSQL.Simple.Types as PG.Types
 import qualified Everest as E
 import qualified Everest.JSON as E.JSON
-import qualified Everest.PostgreSQL as E.PG
+import qualified Everest.Kafka as E.K
 import GHC.Generics (Generic)
+import qualified Kafka.Producer as K.P
 
 --------------------------------------------------------------------------------
 --  Example producer
@@ -31,29 +30,27 @@ import GHC.Generics (Generic)
 
 main :: IO ()
 main = do
-  conn <- PG.connect PG.ConnectInfo
-    { PG.connectHost     = "localhost"
-    , PG.connectPort     = 5432
-    , PG.connectUser     = "everest"
-    , PG.connectPassword = "everest"
-    , PG.connectDatabase = "everest"
-    }
-  let pc = E.PG.ProducerConfig
-        { E.PG._pcConnection = conn
-        , E.PG._pcTable      = PG.Types.QualifiedIdentifier Nothing "event"
-        }
-      env = Env
-        { _eProducerConfig = pc
-        }
-  uuid <- U.V4.nextRandom
-  runApp env $ do
-    E.writeEvents @"store"
-      [ E.JSON.writeRecord (E.Topic "Account") uuid $
-          AccountCreated AccountCreatedEvent
-            { _aceAccountId = uuid
-            , _aceEmail     = "user@example.com"
+  let prodProps = K.P.brokersList [K.P.BrokerAddress "localhost:9092"]
+  eitherErrOrProd <- K.P.newProducer prodProps
+  case eitherErrOrProd of
+    Left err ->
+      print err
+    Right prod -> do
+      let pc = E.K.ProducerConfig
+            { E.K._pcProducer = prod
             }
-      ]
+          env = Env
+            { _eProducerConfig = pc
+            }
+      uuid <- U.V4.nextRandom
+      runApp env $ do
+        E.writeEvents @"store"
+          [ E.JSON.writeRecord (E.Topic "Account") "test-key" $
+              AccountCreated AccountCreatedEvent
+                { _aceAccountId = uuid
+                , _aceEmail     = "user@example.com"
+                }
+          ]
 
 data AccountEvent
   = AccountCreated AccountCreatedEvent
@@ -78,14 +75,14 @@ newtype App a
   deriving newtype (Applicative, Functor, Monad,
                     MonadIO, MonadReader Env)
   deriving (E.MonadProducibleEventStore "store")
-    via (E.PG.ProducerT "store" App)
+    via (E.K.ProducerT "store" App)
 
 data Env
   = Env
-      { _eProducerConfig :: E.PG.ProducerConfig "store"
+      { _eProducerConfig :: E.K.ProducerConfig "store"
       }
 
-  deriving (Generic)
+  deriving stock Generic
 
 runApp :: Env -> App a -> IO a
 runApp env (App m)
