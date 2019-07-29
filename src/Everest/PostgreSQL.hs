@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -23,12 +24,13 @@ import qualified Control.Concurrent.Async as Async
 import qualified Control.Concurrent.STM as STM
 import qualified Control.Concurrent.STM.TBMQueue as STM.TBMQ
 import Control.Monad (forever)
-import Control.Monad.Catch (finally)
+import Control.Monad.Catch (Exception, MonadThrow (..), finally)
 import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Reader (MonadReader)
 import Control.Monad.Trans.Class (lift)
 import qualified Control.Monad.Trans.Resource as Res
 import qualified Data.Aeson as Ae
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS.C8
 import Data.Coerce (Coercible, coerce)
 import Data.Functor (void)
@@ -37,6 +39,7 @@ import Data.Int (Int64)
 import Data.Proxy (Proxy)
 import Data.String (fromString)
 import qualified Data.Text as Tx
+import qualified Data.Typeable as Ty
 import qualified Data.UUID as U
 import qualified Database.PostgreSQL.Simple as PG
 import qualified Database.PostgreSQL.Simple.FromRow as PG.From
@@ -55,7 +58,7 @@ data ProducerConfig tag
       { _pcConnection :: !PG.Connection
       , _pcTable      :: !PG.Types.QualifiedIdentifier
       }
-  deriving (Generic)
+  deriving stock Generic
 
 instance ( MonadIO m
          , MonadReader r m
@@ -99,10 +102,10 @@ data ConsumerConfig tag
   = ConsumerConfig
       { _ccConnection :: !PG.Connection
       , _ccTable      :: !PG.Types.QualifiedIdentifier
-      , _ccChannel    :: !Tx.Text
+      , _ccChannel    :: !BS.ByteString
       , _ccOffset     :: !E.Offset
       }
-  deriving (Generic)
+  deriving stock Generic
 
 instance ( MonadIO m
          , Res.MonadResource m
@@ -132,7 +135,7 @@ pgAllEventsP
   -> [E.Topic]
   -> Cdt.ConduitT i (E.ReadRecord U.UUID Ae.Value) m ()
 pgAllEventsP _ptag _pm topics = do
-  (conn, tbl, offset, maxOffset) <- lift $ do
+  (conn, tbl, chan, offset, maxOffset) <- lift $ do
     cfg <- Lens.view (G.P.typed @(ConsumerConfig tag))
     let conn   = _ccConnection cfg
         tbl    = _ccTable cfg
@@ -141,9 +144,9 @@ pgAllEventsP _ptag _pm topics = do
     maxOffset <- liftIO $ do
       pgListen conn chan
       pgGetMaxOffset conn tbl
-    pure (conn, tbl, offset, maxOffset)
+    pure (conn, tbl, chan, offset, maxOffset)
   goCatchUp conn tbl offset maxOffset
-  goListen conn tbl
+  goListen conn tbl chan
   where
     goCatchUp conn tbl offset maxOffset = do
       let query =
@@ -160,8 +163,8 @@ pgAllEventsP _ptag _pm topics = do
             , PG.In (coerce @_ @[Tx.Text] topics)
             )
       pgStreamQuery @PGReadRecord conn query params
-    goListen conn tbl = forever $ do
-      notifiedOffsets <- liftIO $ pgDrainNotifications conn
+    goListen conn tbl chan = forever $ do
+      notifiedOffsets <- liftIO $ pgDrainNotifications conn chan
       let query =
              "with es as (\
             \   select *\
@@ -222,10 +225,10 @@ pgStreamQuery conn query params = do
 
 pgListen
   :: PG.Connection
-  -> Tx.Text
+  -> BS.ByteString
   -> IO ()
 pgListen conn chan =
-  void $ PG.execute_ conn $ "listen " <> fromString (Tx.unpack chan)
+  void $ PG.execute_ conn $ "listen " <> fromString (BS.C8.unpack chan)
 
 pgGetMaxOffset
   :: PG.Connection
@@ -236,31 +239,39 @@ pgGetMaxOffset conn tbl =
     [PG.Only offset] ->
       pure (E.Offset offset)
     _ ->
-      error "Failable pattern in block with no MonadFail instance"
+      throwM $ GetMaxOffsetException tbl
 
 pgDrainNotifications
   :: PG.Connection
+  -> BS.ByteString
   -> IO [E.Offset]
-pgDrainNotifications conn = do
+pgDrainNotifications conn chan = do
   n <- PG.N.getNotification conn
   case readOffset n of
-    Just offset ->
-      drain [offset]
-    Nothing -> do
-      -- TODO: ERRORS
-      pure []
+    Right moffset ->
+      drain (maybe [] pure moffset)
+    Left badOffset ->
+      throwM $ ReadOffsetException chan badOffset
   where
-    readOffset :: PG.N.Notification -> Maybe E.Offset
-    readOffset (PG.N.Notification _ _ offsetBS) =
-      coerce @(_ Int64) (readMaybe (BS.C8.unpack offsetBS))
+    readOffset :: PG.N.Notification -> Either String (Maybe E.Offset)
+    readOffset (PG.N.Notification _ c offsetBS)
+      | c == chan =
+          case BS.C8.unpack offsetBS of
+            s
+              | Just i <- readMaybe s ->
+                  Right (Just (E.Offset i))
+              | otherwise ->
+                  Left s
+      | otherwise =
+          Right Nothing
     drain offsets =
       PG.N.getNotificationNonBlocking conn >>= \case
-        Just n
-          | Just offset <- readOffset n ->
-              drain (offset : offsets)
-          | otherwise -> do
-              -- TODO: ERRORS
-              pure offsets
+        Just n ->
+          case readOffset n of
+            Right moffset ->
+              drain (maybe id (:) moffset offsets)
+            Left badOffset ->
+              throwM $ ReadOffsetException chan badOffset
         Nothing ->
           pure offsets
 
@@ -282,3 +293,31 @@ instance PG.From.FromRow PGReadRecord where
       , E._rrKey       = key
       , E._rrValue     = value
       }
+
+data GetMaxOffsetException
+  = GetMaxOffsetException PG.Types.QualifiedIdentifier
+  deriving stock Ty.Typeable
+  deriving anyclass Exception
+
+instance Show GetMaxOffsetException where
+  show (GetMaxOffsetException tbl) = concat
+    [ "Unable to get maximum offset from table '"
+    , Tx.unpack $ case tbl of
+        PG.Types.QualifiedIdentifier ms t ->
+          maybe id (\s -> (<>) s . (<>) ".") ms t
+    , "'"
+    ]
+
+data ReadOffsetException
+  = ReadOffsetException BS.ByteString String
+  deriving stock Ty.Typeable
+  deriving anyclass Exception
+
+instance Show ReadOffsetException where
+  show (ReadOffsetException chan badOffset) = concat
+    [ "Unable to read offset from channel '"
+    , BS.C8.unpack chan
+    , "': \""
+    , badOffset
+    , "\""
+    ]
