@@ -27,6 +27,7 @@ import Data.Int (Int32)
 import qualified Data.Generics.Product.Typed as G.P
 import Data.Proxy (Proxy)
 import Data.Foldable (for_)
+import qualified Data.Time.Clock.POSIX as T.POSIX
 import GHC.Generics (Generic)
 import qualified Kafka.Consumer as K.C
 import qualified Kafka.Producer as K.P
@@ -115,16 +116,27 @@ kAllEventsP
 kAllEventsP _ptag _pm _topics = do
   cfg <- Lens.view (G.P.typed @(ConsumerConfig tag))
   let con = _ccConsumer cfg
-      fromConsumerRecord cr =
-        E.ReadRecord
+      millisToUTCTime =
+        T.POSIX.posixSecondsToUTCTime . (/ 1000) . fromIntegral
+      fromConsumerRecord cr = do
+        ts <- case K.C.crTimestamp cr of
+          K.C.CreateTime (K.C.Millis ms) ->
+            Just (millisToUTCTime ms)
+          K.C.LogAppendTime (K.C.Millis ms) ->
+            Just (millisToUTCTime ms)
+          K.C.NoTimestamp ->
+            Nothing
+        k <- K.C.crKey cr
+        v <- K.C.crValue cr
+        pure E.ReadRecord
           { E._rrTopic     = coerce (K.C.crTopic cr)
           , E._rrPartition =
               coerce @(Int -> Int32) @(K.C.PartitionId -> E.Partition)
                 fromIntegral (K.C.crPartition cr)
           , E._rrOffset    = coerce (K.C.crOffset cr)
-          , E._rrTimestamp = undefined
-          , E._rrKey       = undefined
-          , E._rrValue     = undefined
+          , E._rrTimestamp = ts
+          , E._rrKey       = k
+          , E._rrValue     = v
           }
   errsOrMsgs <- K.C.pollMessageBatch con (K.C.Timeout 100) (K.C.BatchSize 100)
   for_ errsOrMsgs $ \case
@@ -132,4 +144,4 @@ kAllEventsP _ptag _pm _topics = do
       -- TODO errors
       error $ "Gah " <> show err
     Right msg ->
-      Cdt.yield (fromConsumerRecord msg)
+      maybe (pure ()) Cdt.yield (fromConsumerRecord msg)
