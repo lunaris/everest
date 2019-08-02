@@ -18,10 +18,12 @@ import qualified Everest as E
 
 import qualified Conduit as Cdt
 import qualified Control.Lens as Lens
-import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Catch (MonadThrow (..))
+import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Reader (MonadReader)
 import qualified Data.ByteString as BS
 import Data.Coerce (coerce)
+import Data.Foldable (fold)
 import Data.Functor (void)
 import Data.Int (Int32)
 import qualified Data.Generics.Product.Typed as G.P
@@ -84,7 +86,10 @@ newtype ConsumerT tag m a
 
 data ConsumerConfig tag
   = ConsumerConfig
-      { _ccConsumer :: !K.C.KafkaConsumer
+      { _ccConsumerProperties  :: !K.C.ConsumerProperties
+      , _ccConsumerOffsetReset :: !K.C.OffsetReset
+      , _ccPollTimeout         :: !K.C.Timeout
+      , _ccPollBatchSize       :: !K.C.BatchSize
       }
   deriving stock Generic
 
@@ -113,9 +118,12 @@ kAllEventsP
   -> Proxy (ConsumerT tag m)
   -> [E.Topic]
   -> Cdt.ConduitT i (E.ReadRecord BS.ByteString BS.ByteString) m ()
-kAllEventsP _ptag _pm _topics = do
+kAllEventsP _ptag _pm topics = do
   cfg <- Lens.view (G.P.typed @(ConsumerConfig tag))
-  let con = _ccConsumer cfg
+  let sub = fold
+        [ K.C.topics (coerce topics)
+        , K.C.offsetReset (_ccConsumerOffsetReset cfg)
+        ]
       millisToUTCTime =
         T.POSIX.posixSecondsToUTCTime . (/ 1000) . fromIntegral
       fromConsumerRecord cr = do
@@ -138,10 +146,15 @@ kAllEventsP _ptag _pm _topics = do
           , E._rrKey       = k
           , E._rrValue     = v
           }
-  errsOrMsgs <- K.C.pollMessageBatch con (K.C.Timeout 100) (K.C.BatchSize 100)
-  for_ errsOrMsgs $ \case
+  eitherErrOrCon <- liftIO $ K.C.newConsumer (_ccConsumerProperties cfg) sub
+  case eitherErrOrCon of
     Left err ->
-      -- TODO errors
-      error $ "Gah " <> show err
-    Right msg ->
-      maybe (pure ()) Cdt.yield (fromConsumerRecord msg)
+      liftIO $ throwM err
+    Right con -> do
+      errsOrMsgs <- K.C.pollMessageBatch con
+        (_ccPollTimeout cfg) (_ccPollBatchSize cfg)
+      for_ errsOrMsgs $ \case
+        Left err ->
+          liftIO $ throwM err
+        Right msg ->
+          maybe (pure ()) Cdt.yield (fromConsumerRecord msg)
